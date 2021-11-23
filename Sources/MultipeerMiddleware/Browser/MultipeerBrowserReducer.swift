@@ -1,7 +1,7 @@
 import Foundation
 import SwiftRex
 
-public let multipeerBrowserReducer = Reducer<MultipeerBrowserAction, MultipeerBrowserState> { action, state in
+public let multipeerBrowserReducer = Reducer<MultipeerBrowserAction, MultipeerBrowserState>.reduce { action, state in
     switch action {
     case .startBrowsing,
          .stopBrowsing,
@@ -14,6 +14,6 @@ public let multipeerBrowserReducer = Reducer<MultipeerBrowserAction, MultipeerBr
          .didSendInvitation,
          .remoteAcceptedInvitation,
          .remoteDeclinedInvitation:
-        return state
+        return
     }
 }

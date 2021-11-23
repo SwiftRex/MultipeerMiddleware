@@ -4,12 +4,11 @@ import MultipeerCombine
 import MultipeerConnectivity
 import SwiftRex
 
-public final class MultipeerMessagingMiddleware: Middleware {
+public final class MultipeerMessagingMiddleware: MiddlewareProtocol {
     public typealias InputActionType = MultipeerSessionMessagingAction
     public typealias OutputActionType = MultipeerSessionMessagingAction
     public typealias StateType = Void
 
-    private var output: AnyActionHandler<OutputActionType>?
     private let session: MultipeerSession
     private var messageSubscription: AnyCancellable?
 
@@ -17,51 +16,53 @@ public final class MultipeerMessagingMiddleware: Middleware {
         self.session = session()
     }
 
-    public func receiveContext(getState: @escaping GetState<StateType>, output: AnyActionHandler<OutputActionType>) {
-        self.output = output
-    }
-
-    public func handle(action: InputActionType, from dispatcher: ActionSource, afterReducer: inout AfterReducer) {
+    public func handle(action: MultipeerSessionMessagingAction, from dispatcher: ActionSource, state: @escaping GetState<Void>) -> IO<MultipeerSessionMessagingAction> {
         switch action {
         case .startMonitoring:
-            startMonitoring()
+            return startMonitoring()
         case .stoppedMonitoring:
-            break
+            return .pure()
         case let .sendData(data):
-            sendData(data)
+            return sendData(data)
         case let .sendDataToPeer(data, peer):
-            sendData(data, to: peer.peerInstance)
+            return sendData(data, to: peer.peerInstance)
         case .gotData,
              .sendDataResult:
-            break
+            return .pure()
         }
     }
 
-    private func startMonitoring() {
-        messageSubscription = session.messages.sink(
-            receiveCompletion: { [weak self] _ in
-                self?.output?.dispatch(.stoppedMonitoring)
-            },
-            receiveValue: { [weak self] event in
-                switch event {
-                case let .data(data, peer, _):
-                    self?.output?.dispatch(.gotData(data, from: Peer(peerInstance: peer)))
-                case .didFinishReceivingResource, .didStartReceivingResource, .stream:
-                    break
+    private func startMonitoring() -> IO<MultipeerSessionMessagingAction> {
+        IO { [weak self] output in
+            guard let self = self else { return}
+            self.messageSubscription = self.session.messages.sink(
+                receiveCompletion: { _ in
+                    output.dispatch(.stoppedMonitoring)
+                },
+                receiveValue: { event in
+                    switch event {
+                    case let .data(data, peer, _):
+                        output.dispatch(.gotData(data, from: Peer(peerInstance: peer)))
+                    case .didFinishReceivingResource, .didStartReceivingResource, .stream:
+                        break
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
-    private func sendData(_ data: Data, to peer: MCPeerID? = nil) {
-        output?.dispatch(
-            .sendDataResult(
-                data,
-                to: peer.map(Peer.init),
-                result: peer.map {
-                    session.send(data, to: $0)
-                } ?? session.sendToAll(data)
+    private func sendData(_ data: Data, to peer: MCPeerID? = nil) -> IO<MultipeerSessionMessagingAction> {
+        IO { [weak self] output in
+            guard let self = self else { return }
+            output.dispatch(
+                .sendDataResult(
+                    data,
+                    to: peer.map(Peer.init),
+                    result: peer.map {
+                        self.session.send(data, to: $0)
+                    } ?? self.session.sendToAll(data)
+                )
             )
-        )
+        }
     }
 }

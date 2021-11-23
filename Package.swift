@@ -1,4 +1,4 @@
-// swift-tools-version:5.1
+// swift-tools-version:5.4
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -13,11 +13,11 @@ let package = Package(
         .library(name: "MultipeerMiddleware", targets: ["MultipeerMiddleware"])
     ],
     dependencies: [
-        .package(url: "https://github.com/SwiftRex/SwiftRex.git", from: "0.7.0")
+        .package(url: "https://github.com/SwiftRex/SwiftRex.git", from: "0.8.8")
     ],
     targets: [
         .target(name: "MultipeerCombine", dependencies: []),
-        .target(name: "MultipeerMiddleware", dependencies: ["CombineRex", "MultipeerCombine"]),
+        .target(name: "MultipeerMiddleware", dependencies: [.product(name: "CombineRex", package: "SwiftRex"), "MultipeerCombine"]),
         .testTarget(name: "MultipeerCombineTests", dependencies: ["MultipeerCombine"]),
         .testTarget(name: "MultipeerMiddlewareTests", dependencies: ["MultipeerMiddleware"])
     ]
