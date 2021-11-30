@@ -3,12 +3,11 @@ import Foundation
 import MultipeerCombine
 import SwiftRex
 
-public final class MultipeerConnectivityMiddleware: Middleware {
+public final class MultipeerConnectivityMiddleware: MiddlewareProtocol {
     public typealias InputActionType = MultipeerSessionConnectivityAction
     public typealias OutputActionType = MultipeerSessionConnectivityAction
     public typealias StateType = Void
 
-    private var output: AnyActionHandler<OutputActionType>?
     private let session: MultipeerSession
     private var connectivitySubscription: AnyCancellable?
 
@@ -16,34 +15,33 @@ public final class MultipeerConnectivityMiddleware: Middleware {
         self.session = session()
     }
 
-    public func receiveContext(getState: @escaping GetState<StateType>, output: AnyActionHandler<OutputActionType>) {
-        self.output = output
-    }
-
-    public func handle(action: InputActionType, from dispatcher: ActionSource, afterReducer: inout AfterReducer) {
+    public func handle(action: MultipeerSessionConnectivityAction, from dispatcher: ActionSource, state: @escaping GetState<Void>) -> IO<MultipeerSessionConnectivityAction> {
         switch action {
         case .startMonitoring:
-            startMonitoring()
+            return startMonitoring()
         default:
-            break
+            return .pure()
         }
     }
 
-    private func startMonitoring() {
-        connectivitySubscription = session.connections.sink(
-            receiveCompletion: { [weak self] _ in
-                self?.output?.dispatch(.stoppedMonitoring)
-            },
-            receiveValue: { [weak self] event in
-                switch event {
-                case let .peerConnected(peer, _):
-                    self?.output?.dispatch(.peerConnected(Peer(peerInstance: peer)))
-                case let .peerDisconnected(peer, _):
-                    self?.output?.dispatch(.peerDisconnected(Peer(peerInstance: peer)))
-                case let .peerIsConnecting(peer, _):
-                    self?.output?.dispatch(.peerIsConnecting(Peer(peerInstance: peer)))
+    private func startMonitoring() -> IO<MultipeerSessionConnectivityAction> {
+        IO { [weak self] output in
+            guard let self = self else { return }
+            self.connectivitySubscription = self.session.connections.sink(
+                receiveCompletion: { _ in
+                    output.dispatch(.stoppedMonitoring)
+                },
+                receiveValue: { event in
+                    switch event {
+                    case let .peerConnected(peer, _):
+                        output.dispatch(.peerConnected(Peer(peerInstance: peer)))
+                    case let .peerDisconnected(peer, _):
+                        output.dispatch(.peerDisconnected(Peer(peerInstance: peer)))
+                    case let .peerIsConnecting(peer, _):
+                        output.dispatch(.peerIsConnecting(Peer(peerInstance: peer)))
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 }

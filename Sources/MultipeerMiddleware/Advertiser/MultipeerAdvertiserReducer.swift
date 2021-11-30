@@ -1,19 +1,19 @@
 import Foundation
 import SwiftRex
 
-public let multipeerAdvertiserReducer = Reducer<MultipeerAdvertiserAction, MultipeerAdvertiserState> { action, state in
+public let multipeerAdvertiserReducer = Reducer<MultipeerAdvertiserAction, MultipeerAdvertiserState>.reduce { action, state in
     switch action {
     case .startedAdvertising:
-        return .advertising
+        state = .advertising
     case .stoppedAdvertising:
-        return .stopped
+        state = .stopped
     case let .stoppedAdvertisingDueToError(error):
-        return .error(MultipeerAdvertiserError(innerError: error))
+        state = .error(MultipeerAdvertiserError(innerError: error))
     case .startAdvertising,
          .stopAdvertising,
          .invited,
          .acceptedInvitation,
          .declinedInvitation:
-        return state
+        return
     }
 }

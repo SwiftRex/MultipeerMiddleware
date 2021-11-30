@@ -4,13 +4,12 @@ import MultipeerCombine
 import MultipeerConnectivity
 import SwiftRex
 
-public final class MultipeerBrowserMiddleware: Middleware {
+public final class MultipeerBrowserMiddleware: MiddlewareProtocol {
     public typealias InputActionType = MultipeerBrowserAction
     public typealias OutputActionType = MultipeerBrowserAction
     public typealias StateType = MultipeerBrowserState
 
     private let browser: () -> MultipeerBrowserPublisher
-    private var output: AnyActionHandler<OutputActionType>?
     private let session: MultipeerSession
     private var browserSubscription: AnyCancellable?
     private let autoInvite: MultipeerBrowserAutoInvite
@@ -29,18 +28,14 @@ public final class MultipeerBrowserMiddleware: Middleware {
         self.timeout = timeout
     }
 
-    public func receiveContext(getState: @escaping GetState<StateType>, output: AnyActionHandler<OutputActionType>) {
-        self.output = output
-    }
-
-    public func handle(action: InputActionType, from dispatcher: ActionSource, afterReducer: inout AfterReducer) {
+    public func handle(action: MultipeerBrowserAction, from dispatcher: ActionSource, state: @escaping GetState<MultipeerBrowserState>) -> IO<MultipeerBrowserAction> {
         switch action {
         case .startBrowsing:
-            startBrowsing()
+            return startBrowsing()
         case .stopBrowsing:
-            stopBrowsing()
+            return stopBrowsing()
         case let .manuallyInvite(peer, browser):
-            invite(peer: peer.peerInstance, browser: browser)
+            return invite(peer: peer.peerInstance, browser: browser)
         case .foundPeer,
              .lostPeer,
              .startedBrowsing,
@@ -49,54 +44,68 @@ public final class MultipeerBrowserMiddleware: Middleware {
              .didSendInvitation,
              .remoteAcceptedInvitation,
              .remoteDeclinedInvitation:
-            break
+            return .pure()
         }
     }
-    private func invite(peer: MCPeerID, browser: MCNearbyServiceBrowser) {
-        session.invite(peer: peer, browser: browser, context: nil, timeout: timeout).sink(
-            receiveCompletion: { [weak self] completion in
+
+    private func invite(peer: MCPeerID, browser: MCNearbyServiceBrowser) -> IO<MultipeerBrowserAction> {
+        IO { [weak self] output in
+            self?.inviteAndOutput(peer: peer, browser: browser, output: output)
+        }
+    }
+
+    private func startBrowsing() -> IO<MultipeerBrowserAction> {
+        IO { [weak self] output in
+            guard let self = self else { return }
+
+            self.browserSubscription = self.browser().sink(
+                receiveCompletion: { completion in
+                    switch completion {
+                    case .finished:
+                        output.dispatch(.stoppedBrowsing)
+                    case let .failure(error):
+                        output.dispatch(.stoppedBrowsingDueToError(error))
+                    }
+                },
+                receiveValue: { [weak self] event in
+                    guard let self = self else { return }
+
+                    switch event {
+                    case let .foundPeer(peer, info, browser):
+                        output.dispatch(.foundPeer(Peer(peerInstance: peer), info: info, browser: browser))
+                        if self.autoInvite.shouldInviteAutomatically(peerID: peer, info: info) {
+                            self.inviteAndOutput(peer: peer, browser: browser, output: output)
+                        }
+                    case let .lostPeer(peer):
+                        output.dispatch(.lostPeer(Peer(peerInstance: peer)))
+                    }
+                }
+            )
+            output.dispatch(.startedBrowsing)
+        }
+    }
+
+    private func inviteAndOutput(peer: MCPeerID, browser: MCNearbyServiceBrowser, output: AnyActionHandler<MultipeerBrowserAction>) {
+        session.invite(peer: peer, browser: browser, context: nil, timeout: self.timeout).sink(
+            receiveCompletion: { completion in
                 switch completion {
                 case let .failure(error):
-                    self?.output?.dispatch(.remoteDeclinedInvitation(Peer(peerInstance: peer), error: error))
+                    output.dispatch(.remoteDeclinedInvitation(Peer(peerInstance: peer), error: error))
                 case .finished:
                     break
                 }
             },
-            receiveValue: { [weak self] peer in
-                self?.output?.dispatch(.remoteAcceptedInvitation(Peer(peerInstance: peer)))
+            receiveValue: { peer in
+                output.dispatch(.remoteAcceptedInvitation(Peer(peerInstance: peer)))
             }
         ).store(in: &invitations)
 
-        output?.dispatch(.didSendInvitation(Peer(peerInstance: peer)))
+        output.dispatch(.didSendInvitation(Peer(peerInstance: peer)))
     }
 
-    private func startBrowsing() {
-        browserSubscription = browser().sink(
-            receiveCompletion: { [weak self] completion in
-                switch completion {
-                case .finished:
-                    self?.output?.dispatch(.stoppedBrowsing)
-                case let .failure(error):
-                    self?.output?.dispatch(.stoppedBrowsingDueToError(error))
-                }
-            },
-            receiveValue: { [weak self] event in
-                guard let self = self else { return }
-                switch event {
-                case let .foundPeer(peer, info, browser):
-                    self.output?.dispatch(.foundPeer(Peer(peerInstance: peer), info: info, browser: browser))
-                    if self.autoInvite.shouldInviteAutomatically(peerID: peer, info: info) {
-                        self.invite(peer: peer, browser: browser)
-                    }
-                case let .lostPeer(peer):
-                    self.output?.dispatch(.lostPeer(Peer(peerInstance: peer)))
-                }
-            }
-        )
-        output?.dispatch(.startedBrowsing)
-    }
-
-    private func stopBrowsing() {
-        browserSubscription = nil
+    private func stopBrowsing() -> IO<MultipeerBrowserAction> {
+        IO { [weak self] _ in
+            self?.browserSubscription = nil
+        }
     }
 }
